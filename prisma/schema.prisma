@@ -168,8 +168,8 @@ model FilingInsiderLink {
 
 model InsiderIssuerLink {
   id           String   @id @default(cuid())
-  insiderCik   String
-  insiderName  String
+  insiderCik   String?
+  insiderName  String?
   issuerId     String
   isDirector   Boolean  @default(false)
   isOfficer    Boolean  @default(false)
@@ -336,7 +336,7 @@ model Settings {
   slackWebhook   String?
   openaiKey      String?
   createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  updatedAt      DateTime @default(now()) @updatedAt
 }
 
 /// Pipeline state tracker (Improvement #5)
