@@ -18,7 +18,23 @@ export async function GET() {
       take: 100,
     });
 
-    return NextResponse.json({ signals });
+    const agedDebt = signals.filter(s => s.hasAgedDebt);
+    const restricted = signals.filter(s => s.hasRestricted);
+    const s3a10 = signals.filter(s => s.has3a10);
+
+    return NextResponse.json({
+      signals,
+      data: {
+        signals,
+        agedDebt,
+        restricted,
+        s3a10
+      },
+      // Flat properties in case the UI reads directly
+      agedDebt,
+      restricted,
+      s3a10
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

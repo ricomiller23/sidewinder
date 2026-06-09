@@ -21,6 +21,11 @@ export async function GET() {
       restrictedCount,
       filing3a10Count,
       lastPolledAt: lastPipeline?.lastPolledAt || null,
+      
+      // UI aliases
+      agedDebtFlags: agedDebtCount,
+      restrictedFlags: restrictedCount,
+      filingsToday: totalFilings, // or actual filings today if tracked
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

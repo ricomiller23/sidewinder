@@ -32,7 +32,13 @@ export async function GET(request: NextRequest) {
       db.contact.count({ where }),
     ]);
 
-    return NextResponse.json({ contacts, total, page, totalPages: Math.ceil(total / limit) });
+    return NextResponse.json({
+      data: contacts,
+      contacts,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit)
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
