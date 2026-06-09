@@ -1,0 +1,498 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+// ──────────────────────────────────────────────────────────────
+// Core Models — Unified (no more dual Issuer/issuers)
+// ──────────────────────────────────────────────────────────────
+
+model Issuer {
+  id                 String               @id @default(cuid())
+  cik                String               @unique
+  ticker             String?
+  name               String
+  marketTier         MarketTier           @default(PINK_CURRENT)
+  sicCode            String?
+  stateOfIncorp      String?
+  fiscalYearEnd      String?
+  hqAddress          String?
+  hqCity             String?
+  hqState            String?
+  hqZip              String?
+  hqCountry          String?
+  phone              String?
+  irEmail            String?
+  irContactName      String?
+  transferAgent      String?
+  website            String?
+  avgDailyVolume     Int?
+  marketCapUsd       BigInt?
+  lastFilingAt       DateTime?
+  passesScreen       Boolean              @default(false)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  filings            Filing[]
+  contacts           Contact[]
+  insiderLinks       InsiderIssuerLink[]
+  agedDebts          AgedDebt[]
+  restrictedLots     RestrictedShareLot[]
+  volumeSnapshots    VolumeSnapshot[]
+  filings3a10        Filing3a10[]
+
+  @@index([marketTier])
+  @@index([passesScreen, lastFilingAt])
+  @@index([ticker])
+}
+
+model Contact {
+  id                 String           @id @default(cuid())
+  issuerId           String
+  cik                String?
+  name               String
+  normalizedName     String?
+  roleTitle          String?
+  contactType        ContactType      @default(INSIDER)
+  source             String?          @default("sec_filing")
+  phone              String?
+  email              String?
+  address1           String?
+  address2           String?
+  city               String?
+  state              String?
+  zip                String?
+  country            String?
+  linkedinUrl        String?
+
+  // CRM fields
+  status             ContactStatus    @default(NEW)
+  leadStatus         LeadStatus       @default(NEW)
+  thesisType         ThesisType       @default(UNKNOWN)
+  thesisSummary      String?
+  outreachScore      Int              @default(0)
+  priorityScore      Int              @default(0)
+  scoreBand          ScoreBand        @default(LOW_PRIORITY)
+
+  // Scoring dimensions
+  thesisStrength     Int              @default(0)
+  timingFreshness    Int              @default(0)
+  tradabilityFit     Int              @default(0)
+  outreachReadiness  Int              @default(0)
+  roleRelevance      Int              @default(0)
+  recordQuality      Int              @default(0)
+  contactability     Int              @default(0)
+
+  // Activity tracking
+  lastContactedAt    DateTime?
+  nextActionType     NextActionType   @default(NONE)
+  nextActionDate     DateTime?
+  nextActionNotes    String?
+  notes              String?
+  isActive           Boolean          @default(true)
+  enrichedAt         DateTime?
+
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  issuer             Issuer           @relation(fields: [issuerId], references: [id], onDelete: Cascade)
+  activities         ContactActivity[]
+
+  @@index([issuerId])
+  @@index([status])
+  @@index([outreachScore(sort: Desc)])
+  @@index([name])
+  @@index([cik])
+}
+
+model Filing {
+  id                 String               @id @default(cuid())
+  accessionNumber    String               @unique
+  formType           FormType
+  filedAt            DateTime
+  periodOfReport     DateTime?
+  issuerId           String
+  insiderCik         String?
+  insiderName        String?
+  rawXmlUrl          String
+  rawHtmlUrl         String?
+  primaryDocUrl      String
+  blobKey            String?
+  score              Int                  @default(0)
+  hasAgedDebt        Boolean              @default(false)
+  hasRestricted      Boolean              @default(false)
+  has3a10            Boolean              @default(false)
+  aiSummary          String?
+  aiSentiment        String?
+  aiRiskLevel        String?
+  footnotesText      String?
+  parsedAt           DateTime?
+  createdAt          DateTime             @default(now())
+
+  issuer             Issuer               @relation(fields: [issuerId], references: [id])
+  agedDebts          AgedDebt[]
+  restrictedLots     RestrictedShareLot[]
+  transactions       Transaction[]
+  insiderLinks       FilingInsiderLink[]
+
+  @@index([formType, filedAt])
+  @@index([issuerId, filedAt])
+  @@index([formType, issuerId])
+  @@index([score])
+  @@index([insiderCik])
+}
+
+/// Junction table: each filing can have multiple insiders
+model FilingInsiderLink {
+  id           String   @id @default(cuid())
+  filingId     String
+  contactId    String?
+  insiderCik   String
+  insiderName  String
+  isDirector   Boolean  @default(false)
+  isOfficer    Boolean  @default(false)
+  isTenPctOwn  Boolean  @default(false)
+  officerTitle String?
+
+  filing       Filing   @relation(fields: [filingId], references: [id], onDelete: Cascade)
+
+  @@unique([filingId, insiderCik])
+  @@index([insiderCik])
+}
+
+model InsiderIssuerLink {
+  id           String   @id @default(cuid())
+  insiderCik   String
+  insiderName  String
+  issuerId     String
+  isDirector   Boolean  @default(false)
+  isOfficer    Boolean  @default(false)
+  isTenPctOwn  Boolean  @default(false)
+  isOther      Boolean  @default(false)
+  officerTitle String?
+  firstSeen    DateTime @default(now())
+  lastSeen     DateTime @default(now())
+
+  issuer       Issuer   @relation(fields: [issuerId], references: [id])
+
+  @@unique([insiderCik, issuerId])
+  @@index([issuerId])
+  @@index([insiderCik])
+}
+
+// ──────────────────────────────────────────────────────────────
+// Detection & Analysis Models
+// ──────────────────────────────────────────────────────────────
+
+model AgedDebt {
+  id              String    @id @default(cuid())
+  issuerId        String
+  filingId        String?
+  source          String
+  sourceUrl       String?
+  noteType        String?
+  principalUsd    Decimal?  @db.Decimal(20, 2)
+  interestRate    Decimal?  @db.Decimal(8, 4)
+  originationDate DateTime?
+  maturityDate    DateTime?
+  ageDays         Int
+  conversionTerms String?
+  rationale       String
+  matchedText     String?
+  detectedAt      DateTime  @default(now())
+
+  filing          Filing?   @relation(fields: [filingId], references: [id])
+  issuer          Issuer    @relation(fields: [issuerId], references: [id])
+
+  @@index([issuerId, ageDays])
+}
+
+model RestrictedShareLot {
+  id           String           @id @default(cuid())
+  issuerId     String
+  filingId     String?
+  insiderCik   String?
+  shares       Decimal          @db.Decimal(20, 4)
+  legend       String?
+  rule         String?
+  acquiredAt   DateTime?
+  releasableAt DateTime?
+  status       RestrictedStatus @default(RESTRICTED)
+  rationale    String
+  detectedAt   DateTime         @default(now())
+
+  filing       Filing?          @relation(fields: [filingId], references: [id])
+  issuer       Issuer           @relation(fields: [issuerId], references: [id])
+
+  @@index([issuerId, status])
+}
+
+/// Transaction-level data from Form 3/4 (Improvement #8)
+model Transaction {
+  id               String    @id @default(cuid())
+  filingId         String
+  insiderCik       String
+  tableType        TableType
+  securityTitle    String
+  transactionDate  DateTime?
+  transactionCode  String?
+  shares           Decimal?  @db.Decimal(20, 4)
+  pricePerShare    Decimal?  @db.Decimal(20, 4)
+  acquiredDisposed String?
+  ownershipForm    String?
+  natureOfOwner    String?
+  sharesOwnedAfter Decimal?  @db.Decimal(20, 4)
+  underlyingTitle  String?
+  underlyingShares Decimal?  @db.Decimal(20, 4)
+  exercisePrice    Decimal?  @db.Decimal(20, 4)
+  exerciseDate     DateTime?
+  expirationDate   DateTime?
+  footnoteIds      String[]
+
+  filing           Filing    @relation(fields: [filingId], references: [id], onDelete: Cascade)
+
+  @@index([filingId])
+  @@index([transactionDate])
+  @@index([insiderCik])
+}
+
+model Filing3a10 {
+  id                         String    @id @default(cuid())
+  filingId                   String?
+  issuerId                   String
+  companyName                String?
+  ticker                     String?
+  filingDate                 DateTime?
+  transactionType            String?
+  securitiesBeingExchanged   String?
+  valueOfSecurities          Decimal?  @db.Decimal(20, 2)
+  numberOfShares             Decimal?  @db.Decimal(20, 4)
+  courtApproval              Boolean   @default(false)
+  courtApprovalDate          DateTime?
+  exchangeRatio              String?
+  securityType               String?
+  sourceUrl                  String?
+  extractedText              String?
+  confidenceScore            Decimal?  @db.Decimal(5, 2)
+  isReviewed                 Boolean   @default(false)
+  outreachStatus             String?   @default("not_contacted")
+  identifiedContacts         Json?     @default("[]")
+  createdAt                  DateTime  @default(now())
+
+  issuer                     Issuer    @relation(fields: [issuerId], references: [id])
+
+  @@index([issuerId])
+}
+
+// ──────────────────────────────────────────────────────────────
+// CRM & Activity Models
+// ──────────────────────────────────────────────────────────────
+
+model ContactActivity {
+  id              String          @id @default(cuid())
+  contactId       String
+  activityType    ActivityType
+  channel         ChannelType     @default(MANUAL)
+  activityAt      DateTime        @default(now())
+  outcome         ActivityOutcome?
+  summary         String
+  followUpDate    DateTime?
+  statusBefore    ContactStatus?
+  statusAfter     ContactStatus?
+  createdAt       DateTime        @default(now())
+
+  contact         Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId, activityAt(sort: Desc)])
+}
+
+model VolumeSnapshot {
+  id         String   @id @default(cuid())
+  issuerId   String
+  asOfDate   DateTime
+  adv30      Int
+  adv90      Int?
+  closePrice Decimal? @db.Decimal(20, 4)
+  source     String
+
+  issuer     Issuer   @relation(fields: [issuerId], references: [id])
+
+  @@unique([issuerId, asOfDate])
+}
+
+model Settings {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  minAdv         Int      @default(15000)
+  lookbackDays   Int      @default(90)
+  tiers          String[]
+  digestCadence  String   @default("daily")
+  slackWebhook   String?
+  openaiKey      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+/// Pipeline state tracker (Improvement #5)
+model PipelineState {
+  id            String   @id @default(cuid())
+  feedType      String   @unique
+  lastPolledAt  DateTime @default(now())
+  lastEntryId   String?
+  entriesFound  Int      @default(0)
+  updatedAt     DateTime @updatedAt
+}
+
+// ──────────────────────────────────────────────────────────────
+// Enums
+// ──────────────────────────────────────────────────────────────
+
+enum FormType {
+  F3
+  F3A
+  F4
+  F4A
+  F5
+  S1
+  S1A
+  SC13D
+  SC13G
+  F144
+  F8K
+  DEF14A
+  F1U
+  OTHER
+}
+
+enum MarketTier {
+  OTCBB
+  OTCQB
+  OTCQX
+  PINK_CURRENT
+  PINK_LIMITED
+  PINK_NO_INFO
+  GREY
+  EXPERT
+  NYSE
+  NASDAQ
+  OTHER
+}
+
+enum RestrictedStatus {
+  RESTRICTED
+  ELIGIBLE_SOON
+  RELEASED
+}
+
+enum TableType {
+  NON_DERIVATIVE
+  DERIVATIVE
+}
+
+enum ContactType {
+  INSIDER
+  DIRECTOR
+  OFFICER
+  TEN_PCT_OWNER
+  FUND
+  LLC_HOLDER
+  COMPANY_CONTACT
+  LEGAL
+  IR
+  TRANSFER_AGENT
+  BROKER
+  REFERRAL
+  OTHER
+}
+
+enum ContactStatus {
+  NEW
+  QUEUED
+  CONTACTED
+  WRONG_CONTACT
+  REFERRED
+  NO_INVENTORY
+  POSSIBLE_INVENTORY
+  DOCS_PENDING
+  FOLLOW_UP
+  DEAD
+  CLOSED_WON
+}
+
+enum LeadStatus {
+  NEW
+  QUALIFIED
+  QUEUED
+  ACTIVE
+  POSSIBLE_INVENTORY
+  DOCS_PENDING
+  DEAD
+  CLOSED_WON
+}
+
+enum ThesisType {
+  AGED_DEBT
+  RESTRICTED_BLOCK
+  BOTH
+  UNKNOWN
+}
+
+enum ScoreBand {
+  HOT
+  WARM
+  MONITOR
+  LOW_PRIORITY
+}
+
+enum NextActionType {
+  CALL
+  EMAIL
+  FOLLOW_UP_CALL
+  FOLLOW_UP_EMAIL
+  REQUEST_DOCS
+  REVIEW_DOCS
+  RESEARCH
+  WAIT
+  CLOSE
+  NONE
+}
+
+enum ActivityType {
+  CALL
+  VOICEMAIL
+  EMAIL
+  INBOUND_REPLY
+  NOTE
+  REFERRAL
+  DOCS_REQUEST
+  DOCS_RECEIVED
+  STATUS_CHANGE
+  SCORE_CHANGE
+}
+
+enum ChannelType {
+  PHONE
+  EMAIL
+  MANUAL
+  SYSTEM
+}
+
+enum ActivityOutcome {
+  NO_ANSWER
+  VOICEMAIL_LEFT
+  EMAIL_SENT
+  REPLY_RECEIVED
+  WRONG_CONTACT
+  REFERRED
+  NO_INVENTORY
+  POSSIBLE_INVENTORY
+  DOCS_PENDING
+  CLOSED
+  OTHER
+}
